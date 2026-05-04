@@ -56,7 +56,7 @@ public class Interview {
                      final String[] classificationNames,
                      final Map<Integer, Set<Integer[]>> setOfLowUnitsByClassification, // pass in the nodes which are going to satisfy our magic function. NEEDED IFF YOU ARE DOING MagicFunctionMode.KNOWN_LOW_UNITS_MODE!
                      final Interview[] subFunctionsForEachAttribute,       // needs to at least be an Interview[numAttributes], but they can all be null if you want no subfunctions.
-                     final Set<Map<Integer, Integer>> impossibleAttributeCombinations, // the combinations of attributes which we are marking as impossible. any node which matches all entries in any one of these maps as >= each value is marked as impossible. in the future we could expand to also use <= and not just >=.
+                     final Map<Integer, Integer> impossibleAttributeCombinations, // the combinations of attributes which we are marking as impossible. any node which matches all entries in any one of these maps as >= each value is marked as impossible. in the future we could expand to also use <= and not just >=.
                      final MagicFunctionMode magicFunctionMode) {          // the mode which actually determines how we know a nodes classification
         this.classificationNames = Objects.isNull(classificationNames)
                 ? Util.createDefaultClassificationNames(numClasses) : classificationNames;

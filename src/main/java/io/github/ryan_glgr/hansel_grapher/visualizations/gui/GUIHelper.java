@@ -46,6 +46,19 @@ public class GUIHelper {
         return Arrays.toString(temp.values) + "\\nClassification: " + cls;
     }
 
+    public static String[] nodeLabelArray(final Node temp, final boolean isLow) {
+        final String cls;
+            if (Node.IMPOSSIBLE_CLASSIFICATION.equals(temp.classification)) {
+                cls = "N/A";
+            } else {
+                cls = (isLow)
+                        ? String.format("%s%s%s", LEFT_FLOOR, temp.classification, RIGHT_FLOOR)
+                        : String.format(" %s ", temp.classification);
+            }
+            return new String[] { Arrays.toString(temp.values),"Classification: " + cls };
+    }
+
+
     public static ArrayList<ArrayList<Node>> sortChainsForVisualization(final ArrayList<ArrayList<Node>> chainSet){
 
         // Apply the sort result back to hanselChainSet

@@ -1,28 +1,33 @@
 package io.github.ryan_glgr.hansel_grapher.visualizations.gui.renderers.hanselchain;
 
 import com.jogamp.common.nio.Buffers;
-import com.jogamp.opengl.GLEventListener;
-import com.jogamp.opengl.GLAutoDrawable;
 import com.jogamp.opengl.GL3;
+import com.jogamp.opengl.GLAutoDrawable;
+import com.jogamp.opengl.util.awt.TextRenderer;
 import io.github.ryan_glgr.hansel_grapher.thehardstuff.Interview.Interview;
 import io.github.ryan_glgr.hansel_grapher.thehardstuff.Interview.LiveInterviewVisualizer;
 import io.github.ryan_glgr.hansel_grapher.thehardstuff.Node;
 import io.github.ryan_glgr.hansel_grapher.visualizations.gui.GUIHelper;
+import io.github.ryan_glgr.hansel_grapher.visualizations.gui.renderers.PanZoomRenderer;
 
-import java.awt.Color;
+import java.awt.*;
+import java.awt.geom.Rectangle2D;
 import java.io.InputStream;
 import java.nio.FloatBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.List;
 
-public class HanselChainRenderer implements GLEventListener, LiveInterviewVisualizer {
+public class HanselChainRenderer extends PanZoomRenderer implements LiveInterviewVisualizer {
 
     // --- Layout constants
-    private static final float NODE_WIDTH = 2.0f;
-    private static final float NODE_HEIGHT = 1.0f;
-    private static final float SIDE_SPACING = 0.75f;
-    private static final float VERTICAL_SPACING = 0.75f;
-    private static final float MARGIN = 1.5f;
+    private static final float NODE_WIDTH = 4.0f;
+    private static final float NODE_HEIGHT = 2.0f;
+    private static final float SIDE_SPACING = NODE_WIDTH / 10f;
+    private static final float VERTICAL_SPACING = NODE_HEIGHT / 6f;
+    private static final float MARGIN = SIDE_SPACING + VERTICAL_SPACING;
+    private static final int FONT_SIZE = 14;
+    private static final float TEXT_PADDING_INSIDE_NODE = 1.5f;
 
     private static final int POSITION_COMPONENTS = 2;   // x, y
     private static final int X_POSITION_IN_ARRAY = 0;
@@ -42,11 +47,10 @@ public class HanselChainRenderer implements GLEventListener, LiveInterviewVisual
     private int vaoId;
     private int shaderProgram;
     private final int[] vboIds = new int[2];    // [VBO_POSITIONS, VBO_COLORS]
-    private int projectionUniformLocation = -1;    // Stored projection, computed in reshape(), uploaded in display()
-    private float[] pendingProjection = null;
-
-
+    private int projectionUniformLocation = -1;
+    private float[] worldBounds;  // { minX, maxX, minY, maxY }, set once after layout
     private volatile boolean colorsDirty;
+    private TextRenderer textRenderer;
 
     private final Interview interview;
 
@@ -54,9 +58,9 @@ public class HanselChainRenderer implements GLEventListener, LiveInterviewVisual
     // All inter-thread communication goes through colorsDirty.
     private ArrayList<ArrayList<Node>> chains;
     private int totalNodes;
-
     // Per-node layout: maps Node -> [centerX, centerY]
     private final HashMap<Node, float[]> nodePositions = new HashMap<>();
+    private final HashMap<Node, String[]> nodeLabels = new HashMap<>();
 
     public HanselChainRenderer(final Interview interview) {
         this.interview = interview;
@@ -74,7 +78,8 @@ public class HanselChainRenderer implements GLEventListener, LiveInterviewVisual
     private void computeLayout() {
         nodePositions.clear();
 
-        if (chains == null || chains.isEmpty()) return;
+        float minX = Float.MAX_VALUE, maxX = -Float.MAX_VALUE;
+        float minY = Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
 
         float chainX = 0.0f;
         for (final ArrayList<Node> chain : chains) {
@@ -84,10 +89,24 @@ public class HanselChainRenderer implements GLEventListener, LiveInterviewVisual
 
             for (final Node node : chain) {
                 nodePositions.put(node, new float[]{ chainX, nodeY });
+                nodeLabels.put(node, GUIHelper.nodeLabelArray(node, isLowUnit(node)));
+
+                minX = Math.min(minX, chainX - NODE_WIDTH  / 2f);
+                maxX = Math.max(maxX, chainX + NODE_WIDTH  / 2f);
+                minY = Math.min(minY, nodeY  - NODE_HEIGHT / 2f);
+                maxY = Math.max(maxY, nodeY  + NODE_HEIGHT / 2f);
+
                 nodeY += NODE_HEIGHT + VERTICAL_SPACING;
             }
             chainX += NODE_WIDTH + SIDE_SPACING;
         }
+
+        worldBounds = new float[]{ minX - MARGIN, maxX + MARGIN, minY - MARGIN, maxY + MARGIN };
+    }
+
+    @Override
+    protected float[] getWorldBounds() {
+        return worldBounds;
     }
 
     // --- Buffer builders ---
@@ -237,11 +256,13 @@ public class HanselChainRenderer implements GLEventListener, LiveInterviewVisual
         gl.glBindVertexArray(0);
         gl.glBindBuffer(GL3.GL_ARRAY_BUFFER, 0);
 
+        textRenderer = new TextRenderer(new java.awt.Font("SansSerif", java.awt.Font.PLAIN, FONT_SIZE));
 
         // ------------------------------------------------------------
         // 7. Upload initial projection so first display() is correct
         // ------------------------------------------------------------
         reshape(drawable, 0, 0, drawable.getSurfaceWidth(), drawable.getSurfaceHeight());
+        super.init(drawable);   // registers mouse listeners
     }
 
     // Overwrites the color VBO in-place. Node count is unchanging so SubData is safe.
@@ -267,77 +288,67 @@ public class HanselChainRenderer implements GLEventListener, LiveInterviewVisual
             colorsDirty = false;
         }
 
-        // ------------------------------------------------------------
-        // 1. Bind GPU pipeline state
-        // ------------------------------------------------------------
         gl.glUseProgram(shaderProgram);
-        if (Objects.nonNull(pendingProjection)) {
-            gl.glUniformMatrix4fv(projectionUniformLocation, 1, false, pendingProjection, 0);
-            pendingProjection = null;
+
+        // Replace the old pendingProjection field with the base class version:
+        if (hasNewProjection()) {
+            gl.glUniformMatrix4fv(projectionUniformLocation, 1, false,
+                    consumePendingProjection(), 0);
         }
 
         gl.glBindVertexArray(vaoId);
-
-
-
-        // ------------------------------------------------------------
-        // 2. Draw
-        // ------------------------------------------------------------
         gl.glDrawArrays(GL3.GL_TRIANGLES, 0, totalNodes * VERTICES_PER_NODE);
-
-        // ------------------------------------------------------------
-        // 3. Cleanup
-        // ------------------------------------------------------------
         gl.glBindVertexArray(0);
         gl.glUseProgram(0);
-        final int error = gl.glGetError();
-        if (error != GL3.GL_NO_ERROR)
-            System.out.println("GL error after draw: " + error);
+        drawLabels();
     }
 
+    private void drawLabels() {
+        final float viewW = getLiveRight() - getLiveLeft();
+        final float viewH = getLiveTop()   - getLiveBottom();
+        final float scaleX = surfaceWidth  / viewW;
+        final float scaleY = surfaceHeight / viewH;
 
+        final float nodeWidthPx  = NODE_WIDTH  * scaleX;
+        final float nodeHeightPx = NODE_HEIGHT * scaleY;
 
-    @Override
-    public void reshape(final GLAutoDrawable drawable, final int x, final int y, final int width, final int height) {
-        // glViewport is always safe to call outside the draw cycle
-        final GL3 gl = drawable.getGL().getGL3();
-        gl.glViewport(0, 0, width, height);
+        final String[] sampleNodeLabel = nodeLabels.values().stream().findFirst()
+                .orElseThrow(() -> new IllegalStateException("No node labels exist"));
 
-        // --- Compute tight bounds from actual node positions ---
-        float minX = Float.MAX_VALUE, maxX = -Float.MAX_VALUE;
-        float minY = Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
+        final double lineHeight = textRenderer.getBounds("Ag").getHeight();
+        final double totalHeight = lineHeight * sampleNodeLabel.length;
 
-        for (final float[] pos : nodePositions.values()) {
-            minX = Math.min(minX, pos[0] - NODE_WIDTH  / 2f);
-            maxX = Math.max(maxX, pos[0] + NODE_WIDTH  / 2f);
-            minY = Math.min(minY, pos[1] - NODE_HEIGHT / 2f);
-            maxY = Math.max(maxY, pos[1] + NODE_HEIGHT / 2f);
-        }
+        final double longestLine = Arrays.stream(sampleNodeLabel)
+                .mapToDouble(line -> textRenderer.getBounds(line).getWidth())
+                .max()
+                .orElseThrow(() -> new IllegalStateException("No node labels exist"));
 
-        minX -= MARGIN;
-        maxX += MARGIN;
-        minY -= MARGIN;
-        maxY += MARGIN;
+        if (longestLine > nodeWidthPx - TEXT_PADDING_INSIDE_NODE) return;
+        if (totalHeight > nodeHeightPx - TEXT_PADDING_INSIDE_NODE) return;
 
-        // --- Adjust for aspect ratio ---
-        final float aspect = (float) width / height;
-        final float graphW = maxX - minX;
-        final float graphH = maxY - minY;
+        textRenderer.beginRendering(surfaceWidth, surfaceHeight);
+        textRenderer.setColor(0f, 0f, 0f, 1f);
 
-        if (graphW / graphH > aspect) {
-            final float centerY = (minY + maxY) / 2f;
-            final float halfH   = (graphW / aspect) / 2f;
-            minY = centerY - halfH;
-            maxY = centerY + halfH;
-        } else {
-            final float centerX = (minX + maxX) / 2f;
-            final float halfW   = (graphH * aspect) / 2f;
-            minX = centerX - halfW;
-            maxX = centerX + halfW;
-        }
+        nodeLabels.entrySet()
+                .forEach(nodeToLabelEntry -> {
+                    final Node key = nodeToLabelEntry.getKey();
+                    final String[] lines = nodeToLabelEntry.getValue();
 
-        // --- Store for upload in display() — never touch program state here ---
-        pendingProjection = orthographicMatrix(minX, maxX, minY, maxY, -1f, 1f);
+                    final float[] pos = nodePositions.get(key);
+
+                    final float screenX = (pos[X_POSITION_IN_ARRAY] - getLiveLeft()) / viewW * surfaceWidth;
+                    final float screenY = (pos[Y_POSITION_IN_ARRAY] - getLiveBottom()) / viewH * surfaceHeight;
+
+                    final float startY = (float)(screenY + totalHeight / 2 - lineHeight);
+                    for (int i = 0; i < lines.length; i++) {
+                        final double lineW = textRenderer.getBounds(lines[i]).getWidth();
+                        final int drawX = (int)(screenX - lineW / 2);
+                        final int drawY = (int)(startY - i * lineHeight);
+                        textRenderer.draw(lines[i], drawX, drawY);
+                    }
+                });
+
+        textRenderer.endRendering();
     }
 
     @Override
@@ -347,6 +358,7 @@ public class HanselChainRenderer implements GLEventListener, LiveInterviewVisual
         final int[] vaos = { vaoId };
         gl.glDeleteVertexArrays(1, vaos, 0);
         gl.glDeleteProgram(shaderProgram);
+        if (textRenderer != null) textRenderer.dispose();
     }
 
     // --- Shader helpers ---
@@ -369,7 +381,6 @@ public class HanselChainRenderer implements GLEventListener, LiveInterviewVisual
         gl.glAttachShader(program, vertexShader);
         gl.glAttachShader(program, fragmentShader);
         gl.glLinkProgram(program);
-        checkProgramLink(gl, program);
         gl.glValidateProgram(program);
 
         gl.glDeleteShader(vertexShader);
@@ -388,16 +399,6 @@ public class HanselChainRenderer implements GLEventListener, LiveInterviewVisual
         }
     }
 
-    private void checkProgramLink(final GL3 gl, final int program) {
-        final int[] status = new int[1];
-        gl.glGetProgramiv(program, GL3.GL_LINK_STATUS, status, 0);
-        if (status[0] == GL3.GL_FALSE) {
-            final byte[] log = new byte[SHADER_LOG_BUFFER_SIZE];
-            gl.glGetProgramInfoLog(program, SHADER_LOG_BUFFER_SIZE, null, 0, log, 0);
-            throw new RuntimeException("SHADER PROGRAM LINK FAILED:\n" + new String(log));
-        }
-    }
-
     private static String loadShaderSource(final String filename) {
         try (final InputStream is = HanselChainRenderer.class.getResourceAsStream(filename)) {
             if (is == null)
@@ -406,34 +407,6 @@ public class HanselChainRenderer implements GLEventListener, LiveInterviewVisual
         } catch (final Exception e) {
             throw new RuntimeException("Failed to load shader: " + filename, e);
         }
-    }
-
-    private static float[] orthographicMatrix(
-            final float left, final float right,
-            final float bottom, final float top,
-            final float near, final float far) {
-        return new float[] {
-                // column 0
-                2f / (right - left),
-                0,
-                0,
-                0,
-                // column 1
-                0,
-                2f / (top - bottom),
-                0,
-                0,
-                // column 2
-                0,
-                0,
-                -2f / (far - near),
-                0,
-                // column 3
-                -(right + left) / (right - left),
-                -(top + bottom) / (top - bottom),
-                -(far + near)   / (far - near),
-                1
-        };
     }
 
     // --- Helpers ---

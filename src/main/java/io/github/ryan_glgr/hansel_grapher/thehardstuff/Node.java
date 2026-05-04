@@ -145,13 +145,12 @@ public class Node {
      * this means that attribute (x0 >= 2 AND x1 >= 0) is an IMPOSSIBLE combination. And any node which satisfies x0 >=2
      * AND x1 >= 0 is an IMPOSSIBLE combination.
      */
-    public static void markImpossibleNodes(final Set<Map<Integer, Integer>> impossibleAttributeCombinations, final ArrayList<Node> nodes) {
+    public static void markImpossibleNodes(final Map<Integer, Integer> impossibleAttributeCombinations, final ArrayList<Node> nodes) {
         if (Objects.isNull(impossibleAttributeCombinations))
             return;
 
         nodes.parallelStream()
-                .filter(node -> impossibleAttributeCombinations.stream()
-                        .anyMatch(node::nodeSatisfiesImpossibleAttributeCombination))
+                .filter(node -> node.nodeSatisfiesImpossibleAttributeCombination(impossibleAttributeCombinations))
                 .forEach(node -> {
                     node.classification = IMPOSSIBLE_CLASSIFICATION;
                     node.classificationConfirmed = true;
@@ -285,8 +284,8 @@ public class Node {
         });
     }
 
-    private boolean nodeSatisfiesImpossibleAttributeCombination(final Map<Integer, Integer> impossibleAttributeCombination) {
-        return impossibleAttributeCombination.entrySet().stream()
+    private boolean nodeSatisfiesImpossibleAttributeCombination(final Map<Integer, Integer> impossibleAttributeCombinations) {
+        return impossibleAttributeCombinations.entrySet().stream()
                 .allMatch(entry -> this.values[entry.getKey()] >= entry.getValue());
     }
 

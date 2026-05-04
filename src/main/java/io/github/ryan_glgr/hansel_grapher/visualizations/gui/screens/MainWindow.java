@@ -55,8 +55,15 @@ public class MainWindow {
 
         // --- OpenGL setup ---
         // change construction:
-        final GLProfile profile = GLProfile.get(GLProfile.GL3);
-        final GLCapabilities caps = new GLCapabilities(profile);
+        final GLProfile profile = GLProfile.get(GLProfile.GL4bc);
+        final GLCapabilities caps = new GLCapabilities(GLProfile.get(GLProfile.GL4bc));
+        caps.setDoubleBuffered(true);
+        final GLCanvas canvas = new GLCanvas(caps);
+        canvas.invoke(false, glAutoDrawable -> {
+            glAutoDrawable.getGL().setSwapInterval(1);  // 1 = vsync. using this so that it runs at fps of the monitor.
+            return true;
+        });
+
         glPanel = new GLCanvas(caps);
         glPanel.addGLEventListener(currentListener);
 

@@ -13,20 +13,20 @@ import java.util.stream.IntStream;
 public class InterviewCreationTestCases {
 
     public static Interview createBasicInterviewWithSubfunctions(final InterviewMode interviewMode) {
-        final Integer[] kValues = new Integer[] {5, 5, 7, 2, 6, 6};
+        final Integer[] kValues = new Integer[] {5, 10, 7, 6};
         final Float[] weights = new Float[] {1.65f, 1.25f, 1.0f, 2.25f, 3.25f, 4.2f};
 
         // x0 >= 1, and x2 >= 1 is IMPOSSIBLE is what we are saying
-        final Set<Map<Integer, Integer>> impossibleCombinations = Set.of(Map.of(
+        final Map<Integer, Integer> impossibleCombinations = Map.of(
             0, 4,
-            2, 2));
+            2, 2);
         return createBasicInterviewWithSubfunctions(interviewMode, kValues, weights, impossibleCombinations);
     }
 
     public static Interview createBasicInterviewWithSubfunctions(final InterviewMode interviewMode,
                                                                  final Integer[] kValues,
                                                                  final Float[] weights,
-                                                                 final Set<Map<Integer, Integer>> impossibleNodeCombinations) {
+                                                                 final Map<Integer, Integer> impossibleNodeCombinations) {
         
         final int maxSum = IntStream.range(0, kValues.length)
             .map(i -> (int) ((kValues[i] - 1) * weights[i]))
